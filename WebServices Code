@@ -1,0 +1,69 @@
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from flask import Flask, jsonify, abort, make_response, request, url_for
+
+scope = ['https://spreadsheets.google.com/feeds',
+         'https://www.googleapis.com/auth/drive']
+
+
+def gAuth():
+	global credentials, gc, worksheet
+	credentials = ServiceAccountCredentials.from_json_keyfile_name('clientsecret.json', scope)
+	gc = gspread.authorize(credentials) # Authorise with Google
+	worksheet = gc.open("gsheet").sheet1 # Open the worksheet
+
+
+gAuth()
+	
+worksheet.clear() # Delete Old Values
+
+worksheet.append_row(['Time', 'Soil Moisture'], value_input_option='RAW') # Add column names
+
+app = Flask(__name__)
+
+readings = [
+    {
+        'DataPoint': 1,
+        'Value': u'SoilMoistureReadings:',
+        'Done': False
+    }
+]
+	
+@app.route('/solomon', methods=['POST'])
+def create_reading():
+    if not request.json or 'Done' in request.json == True:
+        abort(400) 
+    reading = {
+        'DataPoint': readings[-1]['DataPoint'] + 1,
+        'Value': request.json.get('Value', ""),
+        'Time': request.json.get('Time', ""),
+        'Done': False
+    }
+    readings.append(reading)
+    variable = request.json.get('Value')
+    if float(variable) > 100:
+        variable = 100.00
+    if float(variable) < 0:
+        variable = 0.00
+    
+    worksheet.append_row([request.json.get('Time', ""), str(request.json.get('Value', "") + ' %')], value_input_option='RAW')
+
+    return jsonify({'reading': reading}), 201
+	
+
+@app.errorhandler(404)
+def not_found(error):
+    return make_response(jsonify({'error': 'Not found'}), 404)
+
+@app.errorhandler(400)
+def not_found(error):
+    return make_response(jsonify({'error': 'The request could not be understood by the server due to malformed syntax.'}), 400)
+
+@app.errorhandler(500)
+def NotAuth(error):
+	gAuth()
+    return make_response(jsonify({'error': 'Not Authorised. Reauthorising...'}), 500)	
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8000, debug=False)
